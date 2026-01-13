@@ -17,11 +17,16 @@ app.get("/playlist.m3u", (req, res) => {
     return res.status(404).send("playlist.m3u no encontrado");
   }
 
-  res.setHeader("Content-Type", "audio/x-mpegurl; charset=utf-8");
-  res.setHeader("Content-Disposition", 'inline; filename="playlist.m3u"');
+  const content = fs.readFileSync(filePath, "utf8");
 
-  res.sendFile(filePath);
+  res.status(200);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8"); // evita que el navegador lo trate como video
+  res.setHeader("Content-Disposition", 'attachment; filename="playlist.m3u"'); // fuerza descarga
+  res.setHeader("Cache-Control", "no-store");
+
+  return res.send(content);
 });
+
 
 // Opcional: healthcheck
 app.get("/", (req, res) => res.send("OK"));
