@@ -9,132 +9,157 @@ const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3000;
 
-// IMPORTANTE: NO hardcodees tu DB URL en el repo público.
-// En Render poné DATABASE_URL como env var.
+// =====================
+// CONFIG DB
+// =====================
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
-  console.error("Falta DATABASE_URL en variables de entorno.");
+  console.error("❌ Falta DATABASE_URL en Render");
   process.exit(1);
 }
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Render Postgres externo suele requerir SSL
+  ssl: { rejectUnauthorized: false }
 });
 
+// =====================
+// CREAR TABLA AUTOMÁTICA
+// =====================
+async function initDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS m3u_users (
+        username TEXT PRIMARY KEY,
+        password TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    console.log("✅ Tabla m3u_users lista");
+  } catch (err) {
+    console.error("❌ Error creando tabla:", err);
+    process.exit(1);
+  }
+}
+
+// ejecuta apenas arranca el server
+await initDatabase();
+
+// =====================
+// PATHS
+// =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 app.use(express.json());
-
-// Servir archivos estáticos del panel
 app.use("/public", express.static(path.join(__dirname, "public")));
 
-// Panel sin protección (como pediste)
+// =====================
+// RUTAS
+// =====================
+
+app.get("/", (req, res) => res.send("OK"));
+
 app.get("/admin", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
-// Healthcheck
-app.get("/", (req, res) => res.send("OK"));
-
-// Endpoint original opcional (por si lo querés mantener)
+// playlist fija
 app.get("/playlist.m3u", (req, res) => {
   const filePath = path.join(__dirname, "playlist.m3u");
-  if (!fs.existsSync(filePath)) return res.status(404).send("playlist.m3u no encontrado");
+
+  if (!fs.existsSync(filePath))
+    return res.status(404).send("playlist.m3u no encontrado");
 
   const content = fs.readFileSync(filePath, "utf8");
-  res.status(200);
+
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="playlist.m3u"');
   res.setHeader("Cache-Control", "no-store");
-  return res.send(content);
+
+  res.send(content);
 });
 
-// ✅ Lo que querés: /usuario/password.m3u
+// =====================
+// LINK CON USUARIO/PASS
+// =====================
 app.get("/:user/:pass.m3u", async (req, res) => {
   const { user, pass } = req.params;
 
   try {
     const q = await pool.query(
-      "SELECT 1 FROM m3u_users WHERE username = $1 AND password = $2 LIMIT 1",
+      "SELECT 1 FROM m3u_users WHERE username=$1 AND password=$2",
       [user, pass]
     );
 
-    if (q.rowCount === 0) {
-      return res.status(403).send("Credenciales inválidas");
-    }
+    if (q.rowCount === 0)
+      return res.status(403).send("Usuario o contraseña inválidos");
 
     const filePath = path.join(__dirname, "playlist.m3u");
-    if (!fs.existsSync(filePath)) return res.status(404).send("playlist.m3u no encontrado");
-
     const content = fs.readFileSync(filePath, "utf8");
 
-    // Podés poner attachment o inline. Attachment descarga directo.
-    res.status(200);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="playlist.m3u"');
     res.setHeader("Cache-Control", "no-store");
-    return res.send(content);
 
+    res.send(content);
   } catch (err) {
     console.error("DB error:", err);
-    return res.status(500).send("Error interno");
+    res.status(500).send("Error interno");
   }
 });
 
-// ---------- API ADMIN (sin protección) ----------
-
-// Listar usuarios (sin mostrar password)
+// =====================
+// API ADMIN
+// =====================
 app.get("/api/users", async (req, res) => {
   try {
     const q = await pool.query(
       "SELECT username, created_at FROM m3u_users ORDER BY created_at DESC"
     );
     res.json({ ok: true, users: q.rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "db_error" });
+  } catch {
+    res.status(500).json({ ok: false });
   }
 });
 
-// Crear/actualizar usuario
 app.post("/api/users", async (req, res) => {
   const { username, password } = req.body || {};
-
-  if (!username || !password) {
-    return res.status(400).json({ ok: false, error: "missing_fields" });
-  }
+  if (!username || !password)
+    return res.status(400).json({ ok: false });
 
   try {
     await pool.query(
-      `INSERT INTO m3u_users (username, password)
-       VALUES ($1, $2)
-       ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password`,
+      `
+      INSERT INTO m3u_users (username, password)
+      VALUES ($1,$2)
+      ON CONFLICT (username)
+      DO UPDATE SET password = EXCLUDED.password
+      `,
       [username, password]
     );
 
     res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "db_error" });
+  } catch {
+    res.status(500).json({ ok: false });
   }
 });
 
-// Borrar usuario
 app.delete("/api/users/:username", async (req, res) => {
-  const { username } = req.params;
-
   try {
-    const q = await pool.query("DELETE FROM m3u_users WHERE username = $1", [username]);
-    res.json({ ok: true, deleted: q.rowCount });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "db_error" });
+    await pool.query(
+      "DELETE FROM m3u_users WHERE username=$1",
+      [req.params.username]
+    );
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ ok: false });
   }
 });
 
+// =====================
 app.listen(port, () => {
-  console.log(`M3U server corriendo en puerto ${port}`);
+  console.log("🚀 Servidor M3U activo");
 });
