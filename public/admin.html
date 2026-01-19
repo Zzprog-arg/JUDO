@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin M3U</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    input, button { padding: 8px; margin: 4px 0; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { text-align: left; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row input { flex: 1; min-width: 220px; }
+  </style>
+</head>
+<body>
+  <h2>Panel Admin (sin protección)</h2>
+
+  <div class="row">
+    <input id="u" placeholder="username" />
+    <input id="p" placeholder="password" />
+    <button onclick="createUser()">Crear / Actualizar</button>
+  </div>
+
+  <button onclick="loadUsers()">Refrescar lista</button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Creado</th>
+        <th>Link .m3u</th>
+        <th>Acción</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+<script>
+const base = location.origin;
+
+async function loadUsers() {
+  const r = await fetch("/api/users");
+  const j = await r.json();
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  if (!j.ok) {
+    tbody.innerHTML = `<tr><td colspan="4">Error cargando usuarios</td></tr>`;
+    return;
+  }
+
+  for (const it of j.users) {
+    const tr = document.createElement("tr");
+    const linkExample = `${base}/${it.username}/(password).m3u`;
+
+    tr.innerHTML = `
+      <td>${it.username}</td>
+      <td>${new Date(it.created_at).toLocaleString()}</td>
+      <td><code>${linkExample}</code></td>
+      <td><button onclick="delUser('${it.username}')">Borrar</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById("u").value.trim();
+  const password = document.getElementById("p").value.trim();
+  if (!username || !password) return alert("Faltan campos");
+
+  const r = await fetch("/api/users", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ username, password })
+  });
+  const j = await r.json();
+  if (!j.ok) return alert("Error creando usuario");
+  document.getElementById("u").value = "";
+  document.getElementById("p").value = "";
+  loadUsers();
+}
+
+async function delUser(username) {
+  if (!confirm("Borrar " + username + "?")) return;
+  const r = await fetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" });
+  const j = await r.json();
+  if (!j.ok) return alert("Error borrando usuario");
+  loadUsers();
+}
+
+loadUsers();
+</script>
+</body>
+</html>
